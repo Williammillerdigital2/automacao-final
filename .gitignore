@@ -1,0 +1,10 @@
+# Arquivos de Segredo do Google
+client_secret.json
+token.pickle
+
+# Pasta de vídeos gerados
+videos_gerados/
+
+# Arquivos de cache do Python
+__pycache__/
+*.pyc
