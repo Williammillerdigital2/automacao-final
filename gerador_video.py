@@ -97,7 +97,8 @@ def gerar_audio_azure(texto, nome_arquivo):
     speech_config.speech_synthesis_voice_name = "en-US-JennyNeural"
     audio_config = speechsdk.audio.AudioOutputConfig(filename=nome_arquivo)
     
-    result = speechsdk.SpeechSynthesizer(speech_config, audio_config).synthesize_text_async(texto).get()
+    synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+    result = synthesizer.speak_text_async(texto).get()
     if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
         raise Exception(f"Falha ao gerar áudio: {result.cancellation_details}")
     print("Áudio salvo.")
