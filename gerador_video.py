@@ -139,8 +139,7 @@ def criar_video(arquivo_imagem, arquivo_audio, arquivo_saida, roteiro):
     
     final_clip = image_clip.resize(height=target_size[1]).resize(lambda t: 1+0.02*t).set_position(("center", "center"))
 
-    text_clip = TextClip(roteiro, fontsize=70, color='white', font='Arial-Bold', stroke_color='black', stroke_width=3, method='caption', size=(target_size[0]-100, None)).set_position(('center', 'center')).set_duration(audio_clip.duration)
-
+text_clip = TextClip(roteiro, fontsize=70, color='white', font='Arial-Bold', stroke_color='black', stroke_width=3, method='label', size=(target_size[0]-100, None)).set_position(('center', 'center')).set_duration(audio_clip.duration)
     video_final = CompositeVideoClip([final_clip, text_clip], size=target_size).set_audio(audio_clip)
     video_final.write_videofile(arquivo_saida, codec='libx264', audio_codec='aac', temp_audiofile='temp-audio.m4a', remove_temp=True, fps=24)
     print("Vídeo final salvo.")
