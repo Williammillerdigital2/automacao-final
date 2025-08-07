@@ -74,7 +74,7 @@ def buscar_noticia_recente():
 
 def otimizar_conteudo_com_gemini(titulo):
     print("Otimizando conteúdo com Google Gemini...")
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     prompt = f"""Baseado na manchete de celebridade: "{titulo}", gere um conteúdo para um YouTube Short. Retorne um objeto JSON com 3 chaves: "roteiro", "titulos_sugeridos" e "hashtags".
     1. "roteiro": Roteiro curto e cativante de 15-20 segundos.
     2. "titulos_sugeridos": 3 títulos curtos e virais para Shorts, incluindo #shorts.
