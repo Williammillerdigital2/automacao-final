@@ -8,6 +8,7 @@ import time
 import pickle
 import json
 import random
+from dotenv import load_dotenv
 
 # Libs de Serviços e API
 import google.generativeai as genai
@@ -22,18 +23,35 @@ from googleapiclient.http import MediaFileUpload
 from moviepy.editor import *
 from moviepy.video.fx.all import crop
 from PIL import Image, ImageEnhance, ImageOps
+from moviepy.config import change_settings
 
 # ==============================================================================
-# CONFIGURAÇÃO E INICIALIZAÇÃO
+# CONFIGURAÇÃO INICIAL
 # ==============================================================================
+# Carrega as variáveis de ambiente do arquivo .env
+# Essencial para rodar tanto localmente quanto na VM
+load_dotenv()
+
+# Bloco de configuração do ImageMagick. No Linux (VM), ele não encontrará o caminho
+# e seguirá em frente sem erro, usando a instalação padrão do sistema.
+# No Windows, ele usará o caminho especificado.
+try:
+    # Este caminho é apenas para o seu ambiente Windows local
+    if os.name == 'nt': 
+        change_settings({"IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"})
+        print("Caminho do ImageMagick configurado para Windows.")
+except Exception as e:
+    print(f"Aviso: Não foi possível configurar o caminho do ImageMagick. Erro: {e}")
+
+# Inicialização do App Flask (usado apenas para a estrutura do código)
 app = Flask(__name__)
 
+# Constantes do projeto
 CELEB_FEEDS = [
     "https://www.tmz.com/rss.xml", "https://people.com/celebrity/feed/", "https://www.eonline.com/news/rss",
     "https://www.justjared.com/feed/", "https://variety.com/v/film/news/feed/",
     "https://www.hollywoodreporter.com/c/music/feed/", "https://www.vulture.com/rss/index.xml"
 ]
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 VIDEO_DIR, ARQUIVO_LOG_NOTICIAS = "videos_gerados", "noticias_postadas.log" 
 
 # ==============================================================================
@@ -41,44 +59,61 @@ VIDEO_DIR, ARQUIVO_LOG_NOTICIAS = "videos_gerados", "noticias_postadas.log"
 # ==============================================================================
 
 def buscar_noticia_recente():
+    """
+    Busca as 5 notícias mais recentes de vários feeds, ordena por data,
+    e seleciona a mais nova que ainda não foi postada.
+    """
     print("Buscando a notícia mais recente...")
     noticias_postadas = []
     if os.path.exists(ARQUIVO_LOG_NOTICIAS):
-        with open(ARQUIVO_LOG_NOTICIAS, "r") as f:
+        with open(ARQUIVO_LOG_NOTICIAS, "r", encoding='utf-8') as f:
             noticias_postadas = [line.strip() for line in f.readlines()]
 
-    noticia_mais_recente, data_mais_recente = None, None
+    candidatas = []
     for feed_url in CELEB_FEEDS:
         try:
             feed = feedparser.parse(feed_url)
-            if not feed.entries: continue
-            noticia_candidata = feed.entries[0]
-            if noticia_candidata.link in noticias_postadas: continue
-            
-            if hasattr(noticia_candidata, 'published_parsed'):
-                data_candidata = noticia_candidata.published_parsed
-                if data_mais_recente is None or data_candidata > data_mais_recente:
-                    data_mais_recente, noticia_mais_recente = data_candidata, noticia_candidata
+            for entry in feed.entries[:5]:
+                if hasattr(entry, 'published_parsed'):
+                    candidatas.append(entry)
         except Exception as e:
             print(f"Aviso: Falha ao processar feed {feed_url}: {e}")
 
-    if noticia_mais_recente is None: raise Exception("Nenhuma notícia nova encontrada.")
-    titulo, link = noticia_mais_recente.title, noticia_mais_recente.link
-    
-    imagem_url = next((c['url'] for c in getattr(noticia_mais_recente, 'media_content', []) if c), 
-                      next((l.href for l in getattr(noticia_mais_recente, 'links', []) if 'image' in l.get('type', '')), None))
+    if not candidatas:
+        raise Exception("Nenhuma notícia encontrada em nenhum feed.")
 
-    if not imagem_url: raise Exception("Notícia não continha uma imagem.")
+    candidatas.sort(key=lambda x: x.published_parsed, reverse=True)
+
+    noticia_selecionada = None
+    for noticia in candidatas:
+        if noticia.link not in noticias_postadas:
+            noticia_selecionada = noticia
+            break 
+
+    if noticia_selecionada is None:
+        raise Exception("Nenhuma notícia NOVA encontrada. Todas as recentes já foram postadas.")
+
+    titulo = noticia_selecionada.title
+    link = noticia_selecionada.link
+    
+    imagem_url = next((c['url'] for c in getattr(noticia_selecionada, 'media_content', []) if c), 
+                      next((l.href for l in getattr(noticia_selecionada, 'links', []) if 'image' in l.get('type', '')), None))
+
+    if not imagem_url:
+        raise Exception("Notícia selecionada não continha uma imagem.")
+        
     print(f"Notícia selecionada: {titulo}")
     return {"titulo": titulo, "imagem_url": imagem_url, "link": link}
 
 def otimizar_conteudo_com_gemini(titulo):
     print("Otimizando conteúdo com Google Gemini...")
+    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+    
     model = genai.GenerativeModel('gemini-1.5-flash-latest')
     prompt = f"""Baseado na manchete de celebridade: "{titulo}", gere um conteúdo para um YouTube Short. Retorne um objeto JSON com 3 chaves: "roteiro", "titulos_sugeridos" e "hashtags".
-    1. "roteiro": Roteiro curto e cativante de 15-20 segundos.
-    2. "titulos_sugeridos": 3 títulos curtos e virais para Shorts, incluindo #shorts.
-    3. "hashtags": 10-15 hashtags relevantes em inglês.
+    1. "roteiro": Roteiro curto e cativante de 15 a 20 segundos. Tom informativo e direto.
+    2. "titulos_sugeridos": Gere uma lista de 3 títulos otimizados para viralizar no YouTube Shorts. Devem ser curtos, usar gatilhos de curiosidade e terminar com a hashtag #shorts.
+    3. "hashtags": Gere uma lista de 10 a 15 hashtags relevantes em inglês, misturando genéricas e específicas da notícia.
     A resposta DEVE ser apenas o objeto JSON.
     """
     response = model.generate_content(prompt)
@@ -139,7 +174,9 @@ def criar_video(arquivo_imagem, arquivo_audio, arquivo_saida, roteiro):
     
     final_clip = image_clip.resize(height=target_size[1]).resize(lambda t: 1+0.02*t).set_position(("center", "center"))
 
-    text_clip = TextClip(roteiro, fontsize=70, color='white', font='Arial-Bold', stroke_color='black', stroke_width=3, method='label', size=(target_size[0]-100, None)).set_position(('center', 'center')).set_duration(audio_clip.duration)
+    # Alteração para usar o arquivo de fonte local
+    text_clip = TextClip(roteiro, fontsize=70, color='white', font='ARIALBD.TTF', stroke_color='black', stroke_width=3, method='label', size=(target_size[0]-100, None)).set_position(('center', 'center')).set_duration(audio_clip.duration)
+    
     video_final = CompositeVideoClip([final_clip, text_clip], size=target_size).set_audio(audio_clip)
     video_final.write_videofile(arquivo_saida, codec='libx264', audio_codec='aac', temp_audiofile='temp-audio.m4a', remove_temp=True, fps=24)
     print("Vídeo final salvo.")
@@ -161,11 +198,10 @@ def upload_to_youtube(file_path, title, description, tags):
     print("Upload para o YouTube concluído.")
 
 # ==============================================================================
-# ROTA PRINCIPAL DA API E LÓGICA DE EXECUÇÃO
+# FUNÇÃO PRINCIPAL DE EXECUÇÃO
 # ==============================================================================
-@app.route('/trigger-video', methods=['POST'])
 def job_de_criacao_de_video():
-    """Endpoint principal que o cron-job irá chamar."""
+    """Função principal que executa todo o fluxo de trabalho."""
     try:
         if not os.path.exists(VIDEO_DIR): os.makedirs(VIDEO_DIR)
         noticia = buscar_noticia_recente()
@@ -183,14 +219,27 @@ def job_de_criacao_de_video():
         descricao_yt = f"{roteiro}\n\nTags: {', '.join(hashtags_yt)}"
         upload_to_youtube(video_file, titulo_yt, descricao_yt, hashtags_yt)
 
-        with open(ARQUIVO_LOG_NOTICIAS, "a") as f: f.write(f"{noticia['link']}\n")
-        for f in [audio_file, image_file, video_file]: os.remove(f)
+        with open(ARQUIVO_LOG_NOTICIAS, "a", encoding='utf-8') as f: f.write(f"{noticia['link']}\n")
         
-        return jsonify({"status": "sucesso", "mensagem": f"Vídeo criado e postado: {titulo_yt}"}), 200
+        for f in [audio_file, image_file, video_file]:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+            except Exception as e:
+                print(f"Aviso: Não foi possível remover o arquivo {f}. Erro: {e}")
+        
+        print(f"SUCESSO: Vídeo criado e postado: {titulo_yt}")
+
     except Exception as e:
         print(f"ERRO NO PROCESSO: {e}")
-        return jsonify({"status": "erro", "mensagem": str(e)}), 500
 
-# Ponto de entrada para o servidor Gunicorn no Render
+# ==============================================================================
+# PONTO DE ENTRADA
+# ==============================================================================
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    # Este bloco foi removido pois não precisamos mais do servidor Flask.
+    # A execução agora é sempre direta.
+    print("--- INICIANDO EXECUÇÃO DIRETA ---")
+    job_de_criacao_de_video()
+    print("--- EXECUÇÃO DIRETA CONCLUÍDA ---")
+
