@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 # Libs de Serviços e API
 import google.generativeai as genai
 import azure.cognitiveservices.speech as speechsdk
-from flask import Flask, jsonify
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -28,23 +27,17 @@ from moviepy.config import change_settings
 # ==============================================================================
 # CONFIGURAÇÃO INICIAL
 # ==============================================================================
-# Carrega as variáveis de ambiente do arquivo .env
-# Essencial para rodar tanto localmente quanto na VM
+# Carrega as variáveis de ambiente do arquivo .env (essencial para rodar)
 load_dotenv()
 
-# Bloco de configuração do ImageMagick. No Linux (VM), ele não encontrará o caminho
-# e seguirá em frente sem erro, usando a instalação padrão do sistema.
+# Bloco de configuração do ImageMagick. No Linux (VM), ele será ignorado.
 # No Windows, ele usará o caminho especificado.
 try:
-    # Este caminho é apenas para o seu ambiente Windows local
-    if os.name == 'nt': 
+    if os.name == 'nt': # 'nt' é o nome do sistema para Windows
         change_settings({"IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"})
         print("Caminho do ImageMagick configurado para Windows.")
 except Exception as e:
     print(f"Aviso: Não foi possível configurar o caminho do ImageMagick. Erro: {e}")
-
-# Inicialização do App Flask (usado apenas para a estrutura do código)
-app = Flask(__name__)
 
 # Constantes do projeto
 CELEB_FEEDS = [
@@ -106,14 +99,20 @@ def buscar_noticia_recente():
     return {"titulo": titulo, "imagem_url": imagem_url, "link": link}
 
 def otimizar_conteudo_com_gemini(titulo):
+    """Usa a IA para criar um roteiro, títulos e hashtags em inglês."""
     print("Otimizando conteúdo com Google Gemini...")
     genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
     
     model = genai.GenerativeModel('gemini-1.5-flash-latest')
-    prompt = f"""Baseado na manchete de celebridade: "{titulo}", gere um conteúdo para um YouTube Short. Retorne um objeto JSON com 3 chaves: "roteiro", "titulos_sugeridos" e "hashtags".
-    1. "roteiro": Roteiro curto e cativante de 15 a 20 segundos. Tom informativo e direto.
-    2. "titulos_sugeridos": Gere uma lista de 3 títulos otimizados para viralizar no YouTube Shorts. Devem ser curtos, usar gatilhos de curiosidade e terminar com a hashtag #shorts.
-    3. "hashtags": Gere uma lista de 10 a 15 hashtags relevantes em inglês, misturando genéricas e específicas da notícia.
+    prompt = f"""
+    Baseado na seguinte manchete de notícia de celebridade, gere um conteúdo para um YouTube Short. A saída deve ser um objeto JSON com 3 chaves: "roteiro", "titulos_sugeridos" e "hashtags". TODO O CONTEÚDO GERADO DEVE SER EM INGLÊS.
+
+    Manchete: "{titulo}"
+
+    1. "roteiro": Crie um roteiro curto e cativante de 15 a 20 segundos em INGLÊS. O tom deve ser informativo e direto.
+    2. "titulos_sugeridos": Gere uma lista de 3 títulos otimizados para viralizar no YouTube Shorts, em INGLÊS. Devem ser curtos, usar gatilhos de curiosidade e terminar com a hashtag #shorts.
+    3. "hashtags": Gere uma lista de 10 a 15 hashtags relevantes em INGLÊS.
+
     A resposta DEVE ser apenas o objeto JSON.
     """
     response = model.generate_content(prompt)
@@ -124,6 +123,7 @@ def otimizar_conteudo_com_gemini(titulo):
         raise Exception(f"Falha ao decodificar a resposta da IA. Resposta: {json_response_text}")
 
 def gerar_audio_azure(texto, nome_arquivo):
+    """Gera um arquivo de áudio a partir do texto usando a API da Azure."""
     print("Gerando áudio com Microsoft Azure...")
     speech_key, region = os.getenv("AZURE_SPEECH_KEY"), os.getenv("AZURE_SPEECH_REGION")
     if not speech_key or not region: raise Exception("Credenciais da Azure não configuradas.")
@@ -172,12 +172,47 @@ def criar_video(arquivo_imagem, arquivo_audio, arquivo_saida, roteiro):
     if (w/h) > target_ratio: image_clip = crop(image_clip, width=int(h*target_ratio), x_center=w/2)
     else: image_clip = crop(image_clip, height=int(w/target_ratio), y_center=h/2)
     
-    final_clip = image_clip.resize(height=target_size[1]).resize(lambda t: 1+0.02*t).set_position(("center", "center"))
+    # Efeito de Zoom Out
+    video_base = image_clip.resize(height=target_size[1]).resize(lambda t: 1.05 - 0.01*t).set_position(("center", "center"))
 
-    # Alteração para usar o arquivo de fonte local
-    text_clip = TextClip(roteiro, fontsize=70, color='white', font='ARIALBD.TTF', stroke_color='black', stroke_width=3, method='label', size=(target_size[0]-100, None)).set_position(('center', 'center')).set_duration(audio_clip.duration)
+    # --- INÍCIO DO UPGRADE DA LEGENDA ---
+    # 1. Cria a legenda com quebra de linha automática
+    text_clip = TextClip(roteiro,
+                         fontsize=80,
+                         color='white',
+                         font='ARIALBD.TTF',
+                         method='caption',
+                         align='center',
+                         size=(target_size[0]-150, None)
+                        )
+
+    # 2. Cria o fundo preto semitransparente
+    text_background = ColorClip(size=(text_clip.w + 40, text_clip.h + 40),
+                                color=(0,0,0)
+                               ).set_opacity(0.6)
+
+    # 3. Junta o texto e o fundo em um único clipe de legenda
+    legenda_final = CompositeVideoClip([text_background.set_position('center'), 
+                                        text_clip.set_position('center')],
+                                       size=text_background.size
+                                      ).set_position('center').set_duration(audio_clip.duration)
+
+    # 4. Adiciona o efeito de "fade in" suave
+    legenda_final = legenda_final.crossfadein(1.0)
+    # --- FIM DO UPGRADE DA LEGENDA ---
     
-    video_final = CompositeVideoClip([final_clip, text_clip], size=target_size).set_audio(audio_clip)
+    # Combina a imagem com zoom e a nova legenda
+    video_final = CompositeVideoClip([video_base, legenda_final]).set_audio(audio_clip)
+    
+    # Tenta adicionar a música de fundo
+    try:
+        background_music = AudioFileClip("background_music.mp3").volumex(0.1)
+        final_audio = CompositeAudioClip([video_final.audio, background_music.set_duration(video_final.duration)])
+        video_final = video_final.set_audio(final_audio)
+        print("Música de fundo adicionada.")
+    except Exception as e:
+        print(f"Aviso: Não foi possível adicionar música de fundo. Erro: {e}")
+            
     video_final.write_videofile(arquivo_saida, codec='libx264', audio_codec='aac', temp_audiofile='temp-audio.m4a', remove_temp=True, fps=24)
     print("Vídeo final salvo.")
 
@@ -237,9 +272,8 @@ def job_de_criacao_de_video():
 # PONTO DE ENTRADA
 # ==============================================================================
 if __name__ == "__main__":
-    # Este bloco foi removido pois não precisamos mais do servidor Flask.
+    # Este bloco foi removido pois não precisamos mais do servidor Flask para a VM.
     # A execução agora é sempre direta.
     print("--- INICIANDO EXECUÇÃO DIRETA ---")
     job_de_criacao_de_video()
     print("--- EXECUÇÃO DIRETA CONCLUÍDA ---")
-
