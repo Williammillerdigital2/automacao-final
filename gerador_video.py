@@ -172,10 +172,11 @@ def criar_video(arquivo_imagem, arquivo_audio, arquivo_saida, roteiro):
     if (w/h) > target_ratio: image_clip = crop(image_clip, width=int(h*target_ratio), x_center=w/2)
     else: image_clip = crop(image_clip, height=int(w/target_ratio), y_center=h/2)
     
-    # Efeito de Zoom Out
+    # Efeito de Zoom Out na imagem base
     video_base = image_clip.resize(height=target_size[1]).resize(lambda t: 1.05 - 0.01*t).set_position(("center", "center"))
 
     # --- INÍCIO DO UPGRADE DA LEGENDA ---
+
     # 1. Cria a legenda com quebra de linha automática
     text_clip = TextClip(roteiro,
                          fontsize=80,
@@ -191,17 +192,18 @@ def criar_video(arquivo_imagem, arquivo_audio, arquivo_saida, roteiro):
                                 color=(0,0,0)
                                ).set_opacity(0.6)
 
-    # 3. Junta o texto e o fundo em um único clipe de legenda
-    legenda_final = CompositeVideoClip([text_background.set_position('center'), 
-                                        text_clip.set_position('center')],
-                                       size=text_background.size
-                                      ).set_position('center').set_duration(audio_clip.duration)
+    # 3. Junta o texto e o fundo em um único clipe
+    legenda_composicao = CompositeVideoClip([text_background.set_position('center'), 
+                                             text_clip.set_position('center')],
+                                            size=text_background.size
+                                           ).set_position('center')
 
-    # 4. Adiciona o efeito de "fade in" suave
-    legenda_final = legenda_final.crossfadein(1.0)
+    # 4. APLICA A ANIMAÇÃO PRIMEIRO e SÓ DEPOIS define a duração
+    legenda_final = legenda_composicao.crossfadein(1.0).set_duration(audio_clip.duration)
+
     # --- FIM DO UPGRADE DA LEGENDA ---
     
-    # Combina a imagem com zoom e a nova legenda
+    # Combina a imagem com zoom e a nova legenda animada
     video_final = CompositeVideoClip([video_base, legenda_final]).set_audio(audio_clip)
     
     # Tenta adicionar a música de fundo
