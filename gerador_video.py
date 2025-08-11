@@ -41,9 +41,10 @@ except Exception as e:
 
 # Constantes do projeto
 CELEB_FEEDS = [
-    "https://www.tmz.com/rss.xml", "https://people.com/celebrity/feed/", "https://www.eonline.com/news/rss",
-    "https://www.justjared.com/feed/", "https://variety.com/v/film/news/feed/",
-    "https://www.hollywoodreporter.com/c/music/feed/", "https://www.vulture.com/rss/index.xml"
+"https://www.tmz.com/rss.xml",          \# Prioridade 1
+"https://people.com/celebrity/feed/",   \# Prioridade 2
+"https://www.eonline.com/news/rss",     \# Prioridade 3
+"https://www.justjared.com/feed/"       \# Prioridade 4
 ]
 VIDEO_DIR, ARQUIVO_LOG_NOTICIAS = "videos_gerados", "noticias_postadas.log" 
 
